@@ -1,0 +1,16 @@
+{
+    "name": "ward-3-api",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "seed": "node src/seed.js",
+        "dev": "node src/server.js",
+        "start": "node src/server.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^4.21.2",
+        "mongoose": "^8.18.0"
+    }
+}

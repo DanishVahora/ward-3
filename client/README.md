@@ -1,54 +1,40 @@
-# Voter Lookup Client
+# WARD-3 Client
 
-Frontend app for EPIC search and polling place lookup.
+Frontend app for searchable voter records.
 
-## Data Pipeline
+## Why Database Mode
 
-Source files:
+For mobile performance, the app now uses server-side filtering and pagination.
+The browser no longer downloads all records at once.
 
-- `public/data/v1.csv` ... `public/data/v20.csv`
-- `public/data/vibhagName.csv`
+## Architecture
 
-Generated artifact:
+- `client`: React + Vite frontend
+- `server`: Express + SQLite API
 
-- `public/data.json`
+Frontend API calls:
 
-`data.json` is generated automatically before each build via `scripts/generate-data.mjs`.
+- `GET /api/meta`
+- `GET /api/voters?page=1&pageSize=60&search=&vibhag=all&place=all`
 
-## Scripts
+## Setup (Local)
+
+1. Build merged dataset (from CSV files)
+	- In `client`: `npm run generate:data`
+2. Create SQLite database
+	- In `server`: `npm install`
+	- In `server`: `npm run seed`
+3. Start API server
+	- In `server`: `npm run dev`
+4. Start frontend
+	- In `client`: `npm install`
+	- In `client`: `npm run dev`
+
+The Vite dev server proxies `/api` to `http://localhost:4000`.
+
+## Client Scripts
 
 - `npm run dev`: Start local Vite dev server
 - `npm run generate:data`: Rebuild `public/data.json` from CSV files
-- `npm run build`: Generate data, type-check, and build production bundle
+- `npm run build`: Type-check and build production bundle
 - `npm run preview`: Preview production build locally
-
-## Production Data Loading
-
-The app loads `data.json` first (single request, fastest path).
-
-If `data.json` is missing or fails to load, it falls back to loading legacy CSV files from `public/data` so production does not hard-fail.
-
-## Deploy (Static Hosting)
-
-This app is static-host friendly (Vercel / Netlify / Cloudflare Pages).
-
-### Vercel (Recommended)
-
-Use these project settings:
-
-- Root Directory: `client`
-- Build Command: `npm run build`
-- Output Directory: `dist`
-
-`vercel.json` in this folder also applies cache headers:
-
-- `index.html`: no-cache
-- `data.json` and `/data/*.csv`: cache with revalidation window
-
-### Netlify / Cloudflare Pages
-
-Use equivalent settings:
-
-- Base directory: `client`
-- Build command: `npm run build`
-- Publish directory: `dist`

@@ -8,143 +8,130 @@ type VoterRecord = {
     p: string   // place
 }
 
-const dataJsonPath = `${import.meta.env.BASE_URL}data.json`
-const legacyDataDirPath = `${import.meta.env.BASE_URL}data`
-
-function parseCsvLine(line: string): string[] {
-    const cells: string[] = []
-    let current = ''
-    let inQuotes = false
-
-    for (let i = 0; i < line.length; i += 1) {
-        const char = line[i]
-
-        if (char === '"') {
-            if (inQuotes && line[i + 1] === '"') {
-                current += '"'
-                i += 1
-            } else {
-                inQuotes = !inQuotes
-            }
-            continue
-        }
-
-        if (char === ',' && !inQuotes) {
-            cells.push(current)
-            current = ''
-            continue
-        }
-
-        current += char
-    }
-
-    cells.push(current)
-    return cells.map((cell) => cell.trim())
+type MetaResponse = {
+    totalRecords: number
+    vibhagCount: number
+    vibhagOptions: number[]
+    placeOptions: string[]
 }
 
-function parseCsv(content: string): string[][] {
-    const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/)
-    const rows = lines
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .map((line) => parseCsvLine(line))
-
-    return rows.length > 1 ? rows.slice(1) : []
+type VotersResponse = {
+    page: number
+    pageSize: number
+    totalMatching: number
+    totalPages: number
+    rows: VoterRecord[]
 }
 
-async function loadMergedJson(): Promise<VoterRecord[]> {
-    const response = await fetch(dataJsonPath)
+const apiBase = import.meta.env.VITE_API_BASE ?? '/api'
+const pageSize = 60
+
+async function fetchJson<T>(url: string): Promise<T> {
+    const response = await fetch(url)
     if (!response.ok) {
-        throw new Error(`Failed to load data.json: ${response.statusText}`)
+        throw new Error(`Request failed: ${response.status} ${response.statusText}`)
     }
-
-    return response.json() as Promise<VoterRecord[]>
-}
-
-async function loadFromLegacyCsv(): Promise<VoterRecord[]> {
-    const vibhagResponse = await fetch(`${legacyDataDirPath}/vibhagName.csv`)
-    if (!vibhagResponse.ok) {
-        throw new Error(`Failed to load vibhagName.csv: ${vibhagResponse.statusText}`)
-    }
-
-    const vibhagCsv = await vibhagResponse.text()
-    const placeMap = new Map<number, string>()
-
-    for (const [vibhagText, place] of parseCsv(vibhagCsv)) {
-        const vibhagNo = Number(vibhagText)
-        if (Number.isFinite(vibhagNo)) {
-            placeMap.set(vibhagNo, place ?? '')
-        }
-    }
-
-    const voterFiles = Array.from({ length: 20 }, (_, index) => `v${index + 1}.csv`)
-    const voterResponses = await Promise.all(voterFiles.map((name) => fetch(`${legacyDataDirPath}/${name}`)))
-
-    voterResponses.forEach((response, index) => {
-        if (!response.ok) {
-            throw new Error(`Failed to load ${voterFiles[index]}: ${response.statusText}`)
-        }
-    })
-
-    const voterCsvFiles = await Promise.all(voterResponses.map((response) => response.text()))
-    const records: VoterRecord[] = []
-
-    for (const voterCsv of voterCsvFiles) {
-        for (const [vibhagText, indexText, epic] of parseCsv(voterCsv)) {
-            const vibhagNo = Number(vibhagText)
-            const serialIndex = Number(indexText)
-
-            if (!Number.isFinite(vibhagNo) || !Number.isFinite(serialIndex)) {
-                continue
-            }
-
-            records.push({
-                v: vibhagNo,
-                i: serialIndex,
-                e: epic ?? '',
-                p: placeMap.get(vibhagNo) ?? '',
-            })
-        }
-    }
-
-    return records
+    return response.json() as Promise<T>
 }
 
 function App() {
     const [records, setRecords] = useState<VoterRecord[]>([])
+    const [searchInput, setSearchInput] = useState('')
     const [search, setSearch] = useState('')
     const [selectedVibhag, setSelectedVibhag] = useState('all')
     const [selectedPlace, setSelectedPlace] = useState('all')
+    const [vibhagOptions, setVibhagOptions] = useState<number[]>([])
+    const [placeOptions, setPlaceOptions] = useState<string[]>([])
+    const [totalRecords, setTotalRecords] = useState(0)
+    const [totalMatching, setTotalMatching] = useState(0)
+    const [vibhagCount, setVibhagCount] = useState(0)
+    const [page, setPage] = useState(1)
+    const [totalPages, setTotalPages] = useState(1)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
     useEffect(() => {
+        const timeoutId = window.setTimeout(() => {
+            setSearch(searchInput.trim())
+        }, 250)
+
+        return () => {
+            window.clearTimeout(timeoutId)
+        }
+    }, [searchInput])
+
+    useEffect(() => {
+        setPage(1)
+    }, [search, selectedVibhag, selectedPlace])
+
+    useEffect(() => {
         let active = true
 
-        const loadData = async () => {
+        const loadMeta = async () => {
+            try {
+                const params = new URLSearchParams()
+                params.set('vibhag', selectedVibhag)
+
+                const meta = await fetchJson<MetaResponse>(`${apiBase}/meta?${params.toString()}`)
+                if (!active) {
+                    return
+                }
+
+                setTotalRecords(meta.totalRecords)
+                setVibhagCount(meta.vibhagCount)
+                setVibhagOptions(meta.vibhagOptions)
+                setPlaceOptions(meta.placeOptions)
+            } catch (err) {
+                if (active) {
+                    setError(err instanceof Error ? err.message : 'Failed to load filters')
+                }
+            }
+        }
+
+        loadMeta()
+
+        return () => {
+            active = false
+        }
+    }, [selectedVibhag])
+
+    useEffect(() => {
+        if (selectedPlace !== 'all' && !placeOptions.includes(selectedPlace)) {
+            setSelectedPlace('all')
+        }
+    }, [placeOptions, selectedPlace])
+
+    useEffect(() => {
+        let active = true
+
+        const loadPage = async () => {
             setLoading(true)
             setError('')
 
             try {
-                let data: VoterRecord[]
+                const params = new URLSearchParams()
+                params.set('page', String(page))
+                params.set('pageSize', String(pageSize))
+                params.set('search', search)
+                params.set('vibhag', selectedVibhag)
+                params.set('place', selectedPlace)
 
-                try {
-                    data = await loadMergedJson()
-                } catch (jsonError) {
-                    data = await loadFromLegacyCsv()
-
-                    console.warn(
-                        'Falling back to legacy CSV loading because data.json is unavailable.',
-                        jsonError,
-                    )
+                const data = await fetchJson<VotersResponse>(`${apiBase}/voters?${params.toString()}`)
+                if (!active) {
+                    return
                 }
 
-                if (active) {
-                    setRecords(data)
-                }
+                setRecords(data.rows)
+                setTotalMatching(data.totalMatching)
+                setTotalPages(data.totalPages)
+                setPage(data.page)
             } catch (err) {
                 if (active) {
-                    setError(err instanceof Error ? err.message : 'Failed to load data')
+                    setError(
+                        err instanceof Error
+                            ? `${err.message}. Start backend API with: cd ../server && npm run dev`
+                            : 'Failed to load voters',
+                    )
                 }
             } finally {
                 if (active) {
@@ -153,77 +140,63 @@ function App() {
             }
         }
 
-        loadData()
+        loadPage()
 
         return () => {
             active = false
         }
-    }, [])
+    }, [page, search, selectedVibhag, selectedPlace])
 
-    const vibhagOptions = useMemo(
-        () => Array.from(new Set(records.map((record) => record.v))).sort((a, b) => a - b),
-        [records],
-    )
-
-    const placeOptions = useMemo(
-        () => {
-            const scopedRecords =
-                selectedVibhag === 'all'
-                    ? records
-                    : records.filter((record) => String(record.v) === selectedVibhag)
-
-            return Array.from(new Set(scopedRecords.map((record) => record.p))).sort((a, b) =>
-                a.localeCompare(b, 'gu'),
-            )
-        },
-        [records, selectedVibhag],
-    )
-
-    useEffect(() => {
-        if (selectedPlace !== 'all' && !placeOptions.includes(selectedPlace)) {
-            setSelectedPlace('all')
+    const startRow = useMemo(() => {
+        if (totalMatching === 0) {
+            return 0
         }
-    }, [placeOptions, selectedPlace])
+        return (page - 1) * pageSize + 1
+    }, [page, totalMatching])
 
-    const filteredRecords = useMemo(() => {
-        const query = search.trim().toLowerCase()
+    const endRow = useMemo(() => {
+        if (totalMatching === 0) {
+            return 0
+        }
+        return Math.min(page * pageSize, totalMatching)
+    }, [page, totalMatching])
 
-        return records.filter((record) => {
-            const matchesVibhag =
-                selectedVibhag === 'all' || String(record.v) === selectedVibhag
-            const matchesPlace = selectedPlace === 'all' || record.p === selectedPlace
-            const matchesSearch =
-                query.length === 0 ||
-                record.e.toLowerCase().includes(query) ||
-                record.p.toLowerCase().includes(query) ||
-                String(record.v).includes(query) ||
-                String(record.i).includes(query)
+    const canGoPrev = page > 1
+    const canGoNext = page < totalPages
 
-            return matchesVibhag && matchesPlace && matchesSearch
-        })
-    }, [records, search, selectedVibhag, selectedPlace])
+    const onPrev = () => {
+        if (canGoPrev) {
+            setPage((current) => current - 1)
+        }
+    }
+
+    const onNext = () => {
+        if (canGoNext) {
+            setPage((current) => current + 1)
+        }
+    }
 
     return (
         <main className="page">
             <section className="hero-card">
-                <p className="eyebrow">Voter Lookup</p>
-                <h1>EPIC Search and Polling Place Finder</h1>
+                <p className="eyebrow">WARD-3</p>
+                <h1>WARD-3, voters lists</h1>
                 <p className="subtext">
-                    All voter records are merged in one view. Search by EPIC number, Vibhag number, serial
-                    index, or place name.
+                    Search voter records by EPIC number, Vibhag, serial index, or place name. Built for fast
+                    lookup on desktop and mobile.
                 </p>
                 <div className="stats">
                     <article>
                         <span>Total Records</span>
-                        <strong>{records.length.toLocaleString()}</strong>
+                        <strong>{totalRecords.toLocaleString()}</strong>
                     </article>
                     <article>
                         <span>Filtered Records</span>
-                        <strong>{filteredRecords.length.toLocaleString()}</strong>
+                        <strong>{totalMatching.toLocaleString()}</strong>
                     </article>
                     <article>
                         <span>Vibhag Count</span>
-                        <strong>{vibhagOptions.length.toLocaleString()}</strong>
+                        <strong>{vibhagCount.toLocaleString()}</strong>
                     </article>
                 </div>
             </section>
@@ -234,8 +207,8 @@ function App() {
                     <input
                         type="text"
                         placeholder="EPIC, Vibhag, index, place..."
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
+                        value={searchInput}
+                        onChange={(event) => setSearchInput(event.target.value)}
                     />
                 </label>
 
@@ -272,6 +245,23 @@ function App() {
 
             {!loading && !error ? (
                 <section className="table-card">
+                    <div className="table-meta">
+                        <p>
+                            Showing {startRow.toLocaleString()}-{endRow.toLocaleString()} of{' '}
+                            {totalMatching.toLocaleString()} matching records.
+                        </p>
+                        <div className="pagination">
+                            <button type="button" onClick={onPrev} disabled={!canGoPrev}>
+                                Previous
+                            </button>
+                            <span>
+                                Page {page.toLocaleString()} / {totalPages.toLocaleString()}
+                            </span>
+                            <button type="button" onClick={onNext} disabled={!canGoNext}>
+                                Next
+                            </button>
+                        </div>
+                    </div>
                     <div className="table-wrap">
                         <table>
                             <thead>
@@ -283,14 +273,14 @@ function App() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredRecords.length === 0 ? (
+                                {records.length === 0 ? (
                                     <tr>
                                         <td colSpan={4} className="empty-cell">
                                             No records matched your filters.
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredRecords.map((record) => (
+                                    records.map((record) => (
                                         <tr key={`${record.v}-${record.i}-${record.e}`}>
                                             <td>{record.v}</td>
                                             <td>{record.i}</td>
