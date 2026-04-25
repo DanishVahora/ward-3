@@ -206,11 +206,11 @@ function App() {
     return (
         <main className="page">
             <section className="hero-card">
-                <p className="eyebrow">Voter Lookup</p>
-                <h1>EPIC Search and Polling Place Finder</h1>
+                <p className="eyebrow">WARD-3</p>
+                <h1>WARD-3, voters lists</h1>
                 <p className="subtext">
-                    All voter records are merged in one view. Search by EPIC number, Vibhag number, serial
-                    index, or place name.
+                    Search voter records by EPIC number, Vibhag, serial index, or place name. Built for fast
+                    lookup on desktop and mobile.
                 </p>
                 <div className="stats">
                     <article>
